@@ -82,7 +82,8 @@ RUN pip install --no-cache-dir \
     langchain-openai \
     langchain-anthropic \
     langchain-ollama \
-    playwright
+    playwright \
+    aiohttp>=3.9.1
 
 # Pré-instalar Playwright durante o build com tratamento de erros
 RUN python -m playwright install chromium || \
