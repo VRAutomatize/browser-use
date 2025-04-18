@@ -273,6 +273,9 @@ class TaskManager:
                 task["status"] = TaskStatus.RUNNING
                 task["start_time"] = datetime.now()
                 
+                logger.info(f"🚀 Iniciando execução da tarefa {task_id}")
+                logger.info(f"📝 Tarefa: {task['request'].task}")
+                
                 # Executa a tarefa como um todo
                 result, action_result = await self._execute_command(
                     task["request"].task,
@@ -281,13 +284,28 @@ class TaskManager:
                     task["request"].use_vision
                 )
                 
+                logger.info(f"✅ Tarefa {task_id} concluída")
+                logger.info(f"📊 Resultado: {result}")
+                logger.info(f"🎯 Ação: {action_result}")
+                
                 # Atualiza o status final e o resultado
                 task["status"] = TaskStatus.COMPLETED
                 task["end_time"] = datetime.now()
                 task["result"] = result
-                task["action_result"] = action_result
+                
+                # Armazena o resultado da ação se disponível
+                if action_result:
+                    logger.info(f"💾 Armazenando resultado da ação: {action_result}")
+                    task["action_result"] = action_result
+                    # Atualiza o resultado com o texto da ação se disponível
+                    if "text" in action_result:
+                        logger.info(f"📝 Atualizando resultado com texto da ação: {action_result['text']}")
+                        task["result"] = action_result["text"]
+                
+                logger.info(f"🏁 Tarefa {task_id} finalizada com sucesso")
                 
         except Exception as e:
+            logger.error(f"❌ Erro ao executar tarefa {task_id}: {str(e)}")
             task["status"] = TaskStatus.FAILED
             task["error"] = str(e)
             task["end_time"] = datetime.now()
@@ -350,6 +368,8 @@ class TaskManager:
 
     async def _execute_command(self, step: str, browser_config: Optional[BrowserConfigModel] = None, max_steps: int = 20, use_vision: bool = True) -> str:
         try:
+            logger.info(f"🔍 Iniciando execução do comando: {step}")
+            
             # Configurar o modelo LLM
             llm = get_llm(self.llm_config)
             
@@ -372,6 +392,7 @@ class TaskManager:
             )
             
             # Usar max_steps da requisição
+            logger.info(f"🚀 Executando agente com max_steps={max_steps}")
             result = await agent.run(max_steps=max_steps)
             
             # Extrair o resultado final e a ação
@@ -379,18 +400,39 @@ class TaskManager:
             action_result = None
             
             if result and result.history:
+                logger.info(f"📚 Histórico do agente encontrado com {len(result.history)} itens")
+                
                 # Processar o histórico para encontrar o resultado final
-                for item in result.history:
+                for idx, item in enumerate(result.history):
+                    logger.info(f"📝 Processando item {idx + 1} do histórico")
+                    
                     if item.result:
+                        logger.info(f"🔍 Resultado encontrado: {item.result}")
+                        
                         # Verificar se é o resultado final
                         if hasattr(item.result, 'done'):
+                            logger.info(f"✅ Ação 'done' encontrada: {item.result.done}")
                             content = item.result.done.get('text', 'Sem resultado')
-                            action_result = {"done": item.result.done}
+                            action_result = item.result.done
                             break
                         elif isinstance(item.result, str):
+                            logger.info(f"📄 Resultado como string: {item.result}")
                             content = item.result
                         elif hasattr(item.result, 'text'):
+                            logger.info(f"📄 Resultado com texto: {item.result.text}")
                             content = item.result.text
+                        
+                        # Se encontramos uma ação com sucesso, esse é o resultado final
+                        if hasattr(item.result, 'done') and item.result.done.get('success', False):
+                            logger.info(f"✅ Ação final com sucesso: {item.result.done}")
+                            content = item.result.done.get('text', 'Sem resultado')
+                            action_result = item.result.done
+                            break
+                    else:
+                        logger.info(f"⚠️ Item {idx + 1} sem resultado")
+            
+            logger.info(f"📊 Resultado final: {content}")
+            logger.info(f"🎯 Ação final: {action_result}")
             
             # Fechar o navegador após o uso
             await browser.close()
@@ -398,6 +440,7 @@ class TaskManager:
             return content, action_result
             
         except Exception as e:
+            logger.error(f"❌ Erro ao executar comando: {str(e)}")
             await error_handler.notify_error(e, {
                 "context": "execute_command",
                 "step": step
