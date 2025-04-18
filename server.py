@@ -382,11 +382,14 @@ class TaskManager:
                 # Contar passos e extrair resultado
                 for item in result.history:
                     if item.result:
-                        for r in item.result:
-                            if r.action:
-                                steps_count += 1
-                                if r.action.get('type') == 'done':
-                                    content = r.action.get('text', 'Sem resultado')
+                        steps_count += 1
+                        # Verificar se é o resultado final
+                        if isinstance(item.result, str):
+                            content = item.result
+                        elif hasattr(item.result, 'done'):
+                            content = item.result.done.get('text', 'Sem resultado')
+                        elif hasattr(item.result, 'text'):
+                            content = item.result.text
             
             # Fechar o navegador após o uso
             await browser.close()
