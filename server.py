@@ -273,28 +273,19 @@ class TaskManager:
                 task["status"] = TaskStatus.RUNNING
                 task["start_time"] = datetime.now()
                 
-                # Processa cada passo da tarefa
-                steps = task["request"].task.split("\n")
-                results = []
-                steps_executed = 0
-                
-                for step in steps:
-                    if step.strip():  # Ignora linhas vazias
-                        result = await self._execute_command(
-                            step.strip(),
-                            task["request"].browser_config,
-                            task["request"].max_steps,
-                            task["request"].use_vision
-                        )
-                        results.append(result)
-                        steps_executed += 1
-                        # Atualiza o contador de passos em tempo real
-                        task["steps_executed"] = steps_executed
+                # Executa a tarefa como um todo
+                result = await self._execute_command(
+                    task["request"].task,
+                    task["request"].browser_config,
+                    task["request"].max_steps,
+                    task["request"].use_vision
+                )
                 
                 # Atualiza o status final
                 task["status"] = TaskStatus.COMPLETED
                 task["end_time"] = datetime.now()
-                task["result"] = "\n".join(results)
+                task["result"] = result
+                task["steps_executed"] = 1  # A tarefa é executada como um único passo
                 
         except Exception as e:
             task["status"] = TaskStatus.FAILED
@@ -383,20 +374,18 @@ class TaskManager:
             # Usar max_steps da requisição
             result = await agent.run(max_steps=max_steps)
             
-            # Extrair o resultado
+            # Extrair o resultado final
             content = "Passo não concluído"
             if result and result.history:
-                # Coletar todos os resultados relevantes
-                results = []
-                for item in result.history:
+                # Procurar pelo resultado final (última ação do tipo 'done')
+                for item in reversed(result.history):
                     if item.result:
                         for r in item.result:
-                            if r.extracted_content:
-                                results.append(r.extracted_content)
-                            if r.error:
-                                results.append(f"Erro: {r.error}")
-                
-                content = "\n".join(results) if results else "Sem conteúdo extraído"
+                            if r.action and r.action.get('type') == 'done':
+                                content = r.action.get('text', 'Sem resultado')
+                                break
+                        if content != "Passo não concluído":
+                            break
             
             # Fechar o navegador após o uso
             await browser.close()
