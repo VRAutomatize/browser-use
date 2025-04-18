@@ -99,6 +99,7 @@ class SystemStatusResponse(BaseModel):
     running_tasks_count: int
     completed_tasks: int
     failed_tasks: int
+    available_slots: int  # Número de vagas disponíveis para novas tarefas
 
 # Classe para gerenciamento de erros
 class ErrorHandler:
@@ -186,11 +187,11 @@ class TaskManager:
         cpu_count = psutil.cpu_count(logical=False) or 2  # Núcleos físicos
         memory_gb = psutil.virtual_memory().total / (1024**3)  # Memória em GB
         
-        # Limite baseado em CPU (1 tarefa por núcleo)
-        cpu_limit = cpu_count
+        # Limite baseado em CPU (2 tarefas por núcleo físico)
+        cpu_limit = cpu_count * 2
         
-        # Limite baseado em memória (1 tarefa por 2GB)
-        memory_limit = int(memory_gb / 2)
+        # Limite baseado em memória (1 tarefa por 1GB)
+        memory_limit = int(memory_gb)
         
         # Usar o menor dos dois limites
         return min(cpu_limit, memory_limit)
@@ -306,6 +307,10 @@ class TaskManager:
                     steps_executed=task["steps_executed"]
                 ))
         
+        # Calcular vagas disponíveis
+        max_parallel_tasks = self._calculate_max_parallel_tasks()
+        available_slots = max(0, max_parallel_tasks - status_counts[TaskStatus.RUNNING])
+        
         return SystemStatusResponse(
             system_metrics=SystemMetrics(
                 cpu_percent=cpu_percent,
@@ -313,14 +318,15 @@ class TaskManager:
                 memory_used_gb=memory_used_gb,
                 memory_total_gb=memory_total_gb,
                 cpu_count=cpu_count,
-                max_parallel_tasks=self._calculate_max_parallel_tasks()
+                max_parallel_tasks=max_parallel_tasks
             ),
             running_tasks=running_tasks,
             total_tasks=len(self.tasks),
             pending_tasks=status_counts[TaskStatus.PENDING],
             running_tasks_count=status_counts[TaskStatus.RUNNING],
             completed_tasks=status_counts[TaskStatus.COMPLETED],
-            failed_tasks=status_counts[TaskStatus.FAILED]
+            failed_tasks=status_counts[TaskStatus.FAILED],
+            available_slots=available_slots
         )
 
     async def _execute_command(self, step: str) -> str:
@@ -501,6 +507,10 @@ class MetricsCollector:
                         "steps_executed": task["steps_executed"]
                     })
             
+            # Calcular vagas disponíveis
+            max_parallel_tasks = task_manager._calculate_max_parallel_tasks()
+            available_slots = max(0, max_parallel_tasks - status_counts[TaskStatus.RUNNING])
+            
             # Preparar payload
             payload = {
                 "timestamp": datetime.now().isoformat(),
@@ -513,7 +523,8 @@ class MetricsCollector:
                     "disk_used_gb": disk.used / (1024**3),
                     "disk_total_gb": disk.total / (1024**3),
                     "cpu_count": psutil.cpu_count(logical=False) or 2,
-                    "max_parallel_tasks": task_manager._calculate_max_parallel_tasks()
+                    "max_parallel_tasks": max_parallel_tasks,
+                    "available_slots": available_slots
                 },
                 "task_metrics": {
                     "total_tasks": len(task_manager.tasks),
