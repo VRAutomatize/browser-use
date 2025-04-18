@@ -72,6 +72,9 @@ class TaskStatusResponse(BaseModel):
     result: Optional[str] = None
     error: Optional[str] = None
     steps_executed: Optional[int] = None
+    elapsed_seconds: Optional[float] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
 
 class SystemMetrics(BaseModel):
     cpu_percent: float
@@ -245,68 +248,26 @@ class TaskManager:
                 task["status"] = TaskStatus.RUNNING
                 task["start_time"] = datetime.now()
                 
-                try:
-                    # Configurar o modelo LLM
-                    llm = get_llm(task["request"].llm_config)
+                # Executa os passos sequencialmente
+                result_history = []
+                for step in task["request"].steps:
+                    # Atualiza o número de steps executados
+                    task["steps_executed"] = len(result_history)
                     
-                    # Configurar o navegador
-                    browser_config = BrowserConfig(
-                        headless=task["request"].browser_config.headless if task["request"].browser_config else True,
-                        disable_security=task["request"].browser_config.disable_security if task["request"].browser_config else True,
-                        extra_chromium_args=task["request"].browser_config.extra_chromium_args if task["request"].browser_config else []
-                    )
+                    # Executa o comando
+                    result = await self._execute_command(step)
+                    result_history.append(result)
                     
-                    # Inicializar o navegador
-                    browser = Browser(config=browser_config)
-                    
-                    # Inicializar e executar o agente
-                    agent = Agent(
-                        task=task["request"].task, 
-                        llm=llm, 
-                        browser=browser,
-                        use_vision=task["request"].use_vision
-                    )
-                    
-                    result = await agent.run(max_steps=task["request"].max_steps)
-                    
-                    # Extrair o resultado
-                    success = False
-                    content = "Tarefa não concluída"
-                    
-                    if result and result.history and len(result.history) > 0:
-                        last_item = result.history[-1]
-                        if last_item.result and len(last_item.result) > 0:
-                            last_result = last_item.result[-1]
-                            content = last_result.extracted_content or "Sem conteúdo extraído"
-                            success = last_result.is_done
-                    
-                    task["result"] = content
-                    task["status"] = TaskStatus.COMPLETED if success else TaskStatus.FAILED
-                    task["steps_executed"] = len(result.history) if result.history else 0
-                    task["end_time"] = datetime.now()
-                    
-                    # Fechar o navegador após o uso
-                    await browser.close()
-                    
-                except Exception as e:
-                    task["status"] = TaskStatus.FAILED
-                    task["error"] = str(e)
-                    task["end_time"] = datetime.now()
-                    await error_handler.notify_error(e, {
-                        "context": "execute_task",
-                        "task_id": task_id,
-                        "task_info": {
-                            "status": task["status"],
-                            "start_time": task["start_time"].isoformat() if task["start_time"] else None,
-                            "end_time": task["end_time"].isoformat() if task["end_time"] else None
-                        }
-                    })
-                    
+                    # Atualiza o resultado parcial
+                    task["result"] = "\n".join(result_history)
+                
+                # Atualiza o status final
+                task["status"] = TaskStatus.COMPLETED
+                task["end_time"] = datetime.now()
+                task["result"] = "\n".join(result_history)
+                task["steps_executed"] = len(result_history)
+                
         except Exception as e:
-            await error_handler.notify_error(e, {
-                "context": "task_execution",
-                "task_id": task_id
-            })
             task["status"] = TaskStatus.FAILED
             task["error"] = str(e)
             task["end_time"] = datetime.now()
@@ -361,6 +322,50 @@ class TaskManager:
             completed_tasks=status_counts[TaskStatus.COMPLETED],
             failed_tasks=status_counts[TaskStatus.FAILED]
         )
+
+    async def _execute_command(self, step: str) -> str:
+        try:
+            # Configurar o modelo LLM
+            llm = get_llm(self.llm_config)
+            
+            # Configurar o navegador
+            browser_config = BrowserConfig(
+                headless=True,
+                disable_security=True
+            )
+            
+            # Inicializar o navegador
+            browser = Browser(config=browser_config)
+            
+            # Inicializar e executar o agente
+            agent = Agent(
+                task=step,
+                llm=llm,
+                browser=browser,
+                use_vision=False
+            )
+            
+            result = await agent.run(max_steps=1)
+            
+            # Extrair o resultado
+            content = "Passo não concluído"
+            if result and result.history and len(result.history) > 0:
+                last_item = result.history[-1]
+                if last_item.result and len(last_item.result) > 0:
+                    last_result = last_item.result[-1]
+                    content = last_result.extracted_content or "Sem conteúdo extraído"
+            
+            # Fechar o navegador após o uso
+            await browser.close()
+            
+            return content
+            
+        except Exception as e:
+            await error_handler.notify_error(e, {
+                "context": "execute_command",
+                "step": step
+            })
+            return f"Erro ao executar passo: {str(e)}"
 
 # Inicializar o gerenciador de tarefas
 task_manager = TaskManager()
@@ -426,12 +431,22 @@ async def get_task_status(task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
     
+    elapsed_seconds = None
+    if task["start_time"]:
+        if task["end_time"]:
+            elapsed_seconds = (task["end_time"] - task["start_time"]).total_seconds()
+        else:
+            elapsed_seconds = (datetime.now() - task["start_time"]).total_seconds()
+    
     return TaskStatusResponse(
         task_id=task_id,
         status=task["status"],
         result=task["result"],
         error=task["error"],
-        steps_executed=task["steps_executed"]
+        steps_executed=task["steps_executed"],
+        elapsed_seconds=elapsed_seconds,
+        start_time=task["start_time"],
+        end_time=task["end_time"]
     )
 
 @app.get("/status", response_model=SystemStatusResponse)
