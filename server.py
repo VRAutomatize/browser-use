@@ -20,6 +20,7 @@ from enum import Enum
 from datetime import datetime
 import aiohttp
 import json
+from contextlib import asynccontextmanager
 
 from browser_use import Agent, BrowserConfig, Browser
 
@@ -31,7 +32,25 @@ logger = logging.getLogger("browser-use-api")
 # Carregar variáveis de ambiente
 load_dotenv()
 
-app = FastAPI(title="Browser-use API", description="API para controlar o Browser-use")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Iniciar o coletor de métricas
+    metrics_task = asyncio.create_task(metrics_collector.start())
+    yield
+    # Parar o coletor de métricas e fechar o handler de erros
+    await metrics_collector.stop()
+    await error_handler.close()
+    metrics_task.cancel()
+    try:
+        await metrics_task
+    except asyncio.CancelledError:
+        pass
+
+app = FastAPI(
+    title="Browser-use API",
+    description="API para controlar o Browser-use",
+    lifespan=lifespan
+)
 
 # Enum para status das tarefas
 class TaskStatus(str, Enum):
@@ -254,14 +273,25 @@ class TaskManager:
                 task["status"] = TaskStatus.RUNNING
                 task["start_time"] = datetime.now()
                 
-                # Executa a tarefa
-                result = await self._execute_command(task["request"].task)
+                # Processa cada passo da tarefa
+                steps = task["request"].task.split("\n")
+                results = []
+                steps_executed = 0
+                
+                for step in steps:
+                    if step.strip():  # Ignora linhas vazias
+                        result = await self._execute_command(
+                            step.strip(),
+                            task["request"].browser_config
+                        )
+                        results.append(result)
+                        steps_executed += 1
                 
                 # Atualiza o status final
                 task["status"] = TaskStatus.COMPLETED
                 task["end_time"] = datetime.now()
-                task["result"] = result
-                task["steps_executed"] = 1
+                task["result"] = "\n".join(results)
+                task["steps_executed"] = steps_executed
                 
         except Exception as e:
             task["status"] = TaskStatus.FAILED
@@ -324,37 +354,46 @@ class TaskManager:
             available_slots=available_slots
         )
 
-    async def _execute_command(self, step: str) -> str:
+    async def _execute_command(self, step: str, browser_config: Optional[BrowserConfigModel] = None) -> str:
         try:
             # Configurar o modelo LLM
             llm = get_llm(self.llm_config)
             
             # Configurar o navegador
-            browser_config = BrowserConfig(
-                headless=True,
-                disable_security=True
+            browser_config_obj = BrowserConfig(
+                headless=browser_config.headless if browser_config else False,
+                disable_security=browser_config.disable_security if browser_config else True,
+                extra_chromium_args=browser_config.extra_chromium_args if browser_config else []
             )
             
             # Inicializar o navegador
-            browser = Browser(config=browser_config)
+            browser = Browser(config=browser_config_obj)
             
             # Inicializar e executar o agente
             agent = Agent(
                 task=step,
                 llm=llm,
                 browser=browser,
-                use_vision=False
+                use_vision=True  # Habilitar visão para melhor navegação
             )
             
-            result = await agent.run(max_steps=1)
+            # Permitir mais passos para ações complexas
+            result = await agent.run(max_steps=5)
             
             # Extrair o resultado
             content = "Passo não concluído"
-            if result and result.history and len(result.history) > 0:
-                last_item = result.history[-1]
-                if last_item.result and len(last_item.result) > 0:
-                    last_result = last_item.result[-1]
-                    content = last_result.extracted_content or "Sem conteúdo extraído"
+            if result and result.history:
+                # Coletar todos os resultados relevantes
+                results = []
+                for item in result.history:
+                    if item.result:
+                        for r in item.result:
+                            if r.extracted_content:
+                                results.append(r.extracted_content)
+                            if r.error:
+                                results.append(f"Erro: {r.error}")
+                
+                content = "\n".join(results) if results else "Sem conteúdo extraído"
             
             # Fechar o navegador após o uso
             await browser.close()
@@ -559,17 +598,6 @@ class MetricsCollector:
 
 # Inicializar o coletor de métricas
 metrics_collector = MetricsCollector()
-
-# Modificar o evento de startup para iniciar o coletor de métricas
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(metrics_collector.start())
-
-# Modificar o evento de shutdown para parar o coletor de métricas
-@app.on_event("shutdown")
-async def shutdown_event():
-    await metrics_collector.stop()
-    await error_handler.close()
 
 if __name__ == "__main__":
     import uvicorn
