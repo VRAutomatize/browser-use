@@ -398,6 +398,11 @@ class TaskManager:
                         if hasattr(item.result, 'done') and item.result.done.get('success', False):
                             content = item.result.done.get('text', 'Sem resultado')
                             break
+                
+                # Atualizar o contador de passos na tarefa atual
+                task_id = list(self.tasks.keys())[-1]  # Pega a última tarefa criada
+                if task_id in self.tasks:
+                    self.tasks[task_id]["steps_executed"] = steps_count
             
             # Fechar o navegador após o uso
             await browser.close()
