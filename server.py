@@ -288,12 +288,13 @@ class TaskManager:
                         )
                         results.append(result)
                         steps_executed += 1
+                        # Atualiza o contador de passos em tempo real
+                        task["steps_executed"] = steps_executed
                 
                 # Atualiza o status final
                 task["status"] = TaskStatus.COMPLETED
                 task["end_time"] = datetime.now()
                 task["result"] = "\n".join(results)
-                task["steps_executed"] = steps_executed
                 
         except Exception as e:
             task["status"] = TaskStatus.FAILED
