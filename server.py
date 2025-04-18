@@ -1,8 +1,12 @@
 import os
 import logging
 import asyncio
+import traceback
+import sys
 from typing import Optional, Dict, Any, List
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, Request
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI, AzureChatOpenAI
@@ -14,6 +18,8 @@ import psutil
 import uuid
 from enum import Enum
 from datetime import datetime
+import aiohttp
+import json
 
 from browser_use import Agent, BrowserConfig, Browser
 
@@ -91,11 +97,86 @@ class SystemStatusResponse(BaseModel):
     completed_tasks: int
     failed_tasks: int
 
+# Classe para gerenciamento de erros
+class ErrorHandler:
+    def __init__(self):
+        self.webhook_url = "https://vrautomatize-n8n.snrhk1.easypanel.host/webhook/browser-use-vra-handler"
+        self.session = None
+    
+    async def _get_session(self):
+        if self.session is None:
+            self.session = aiohttp.ClientSession()
+        return self.session
+    
+    async def notify_error(self, error: Exception, context: Dict[str, Any] = None):
+        """Notifica o webhook sobre um erro"""
+        try:
+            session = await self._get_session()
+            
+            # Capturar stack trace
+            stack_trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+            
+            # Preparar payload
+            payload = {
+                "error_type": type(error).__name__,
+                "error_message": str(error),
+                "stack_trace": stack_trace,
+                "timestamp": datetime.now().isoformat(),
+                "context": context or {},
+                "system_info": {
+                    "python_version": sys.version,
+                    "platform": sys.platform,
+                    "cpu_count": psutil.cpu_count(),
+                    "memory_usage": psutil.virtual_memory()._asdict(),
+                    "disk_usage": psutil.disk_usage('/')._asdict()
+                }
+            }
+            
+            async with session.post(self.webhook_url, json=payload) as response:
+                if response.status != 200:
+                    logger.error(f"Erro ao notificar webhook de erro: {response.status} - {await response.text()}")
+        except Exception as e:
+            logger.error(f"Erro ao enviar notificação de erro: {str(e)}")
+    
+    async def close(self):
+        """Fecha a sessão HTTP"""
+        if self.session:
+            await self.session.close()
+            self.session = None
+
+# Inicializar o handler de erros
+error_handler = ErrorHandler()
+
+# Middleware para capturar erros globais
+@app.middleware("http")
+async def error_middleware(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as e:
+        # Capturar contexto da requisição
+        context = {
+            "path": request.url.path,
+            "method": request.method,
+            "headers": dict(request.headers),
+            "query_params": dict(request.query_params),
+            "client_host": request.client.host if request.client else None
+        }
+        
+        # Notificar erro
+        await error_handler.notify_error(e, context)
+        
+        # Retornar resposta de erro
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Ocorreu um erro interno no servidor"}
+        )
+
 # Gerenciador de tarefas
 class TaskManager:
     def __init__(self):
         self.tasks: Dict[str, Dict] = {}
         self.semaphore = asyncio.Semaphore(self._calculate_max_parallel_tasks())
+        self.webhook_url = "https://vrautomatize-n8n.snrhk1.easypanel.host/webhook/notify-run"
     
     def _calculate_max_parallel_tasks(self) -> int:
         """Calcula o número máximo de tarefas paralelas baseado nos recursos da máquina"""
@@ -111,6 +192,33 @@ class TaskManager:
         # Usar o menor dos dois limites
         return min(cpu_limit, memory_limit)
     
+    async def _notify_webhook(self, task_id: str, request: TaskRequest):
+        """Notifica o webhook sobre uma nova tarefa"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                payload = {
+                    "task_id": task_id,
+                    "task": request.task,
+                    "llm_config": {
+                        "provider": request.llm_config.provider,
+                        "model_name": request.llm_config.model_name,
+                        "temperature": request.llm_config.temperature
+                    },
+                    "browser_config": {
+                        "headless": request.browser_config.headless if request.browser_config else True,
+                        "disable_security": request.browser_config.disable_security if request.browser_config else True
+                    },
+                    "max_steps": request.max_steps,
+                    "use_vision": request.use_vision,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                async with session.post(self.webhook_url, json=payload) as response:
+                    if response.status != 200:
+                        logger.error(f"Erro ao notificar webhook: {response.status} - {await response.text()}")
+        except Exception as e:
+            await error_handler.notify_error(e, {"context": "notify_webhook", "task_id": task_id})
+    
     async def create_task(self, request: TaskRequest) -> str:
         task_id = str(uuid.uuid4())
         self.tasks[task_id] = {
@@ -122,6 +230,11 @@ class TaskManager:
             "start_time": None,
             "end_time": None
         }
+        
+        # Notificar webhook em background
+        asyncio.create_task(self._notify_webhook(task_id, request))
+        
+        # Iniciar execução da tarefa
         asyncio.create_task(self._execute_task(task_id))
         return task_id
     
@@ -179,10 +292,21 @@ class TaskManager:
                     task["status"] = TaskStatus.FAILED
                     task["error"] = str(e)
                     task["end_time"] = datetime.now()
-                    logger.error(f"Erro ao executar tarefa {task_id}: {str(e)}")
+                    await error_handler.notify_error(e, {
+                        "context": "execute_task",
+                        "task_id": task_id,
+                        "task_info": {
+                            "status": task["status"],
+                            "start_time": task["start_time"].isoformat() if task["start_time"] else None,
+                            "end_time": task["end_time"].isoformat() if task["end_time"] else None
+                        }
+                    })
                     
         except Exception as e:
-            logger.error(f"Erro ao executar tarefa {task_id}: {str(e)}")
+            await error_handler.notify_error(e, {
+                "context": "task_execution",
+                "task_id": task_id
+            })
             task["status"] = TaskStatus.FAILED
             task["error"] = str(e)
             task["end_time"] = datetime.now()
@@ -317,6 +441,11 @@ async def get_system_status():
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+# Adicionar handler de shutdown para fechar a sessão HTTP
+@app.on_event("shutdown")
+async def shutdown_event():
+    await error_handler.close()
 
 if __name__ == "__main__":
     import uvicorn
