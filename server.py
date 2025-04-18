@@ -410,7 +410,7 @@ class TaskManager:
                         logger.info(f"🔍 Resultado encontrado: {item.result}")
                         
                         # Verificar se é o resultado final
-                        if hasattr(item.result, 'done'):
+                        if hasattr(item.result, 'done') and item.result.done:
                             logger.info(f"✅ Ação 'done' encontrada: {item.result.done}")
                             content = item.result.done.get('text', 'Sem resultado')
                             action_result = item.result.done
@@ -423,10 +423,10 @@ class TaskManager:
                             content = item.result.text
                         
                         # Se encontramos uma ação com sucesso, esse é o resultado final
-                        if hasattr(item.result, 'done') and item.result.done.get('success', False):
-                            logger.info(f"✅ Ação final com sucesso: {item.result.done}")
-                            content = item.result.done.get('text', 'Sem resultado')
-                            action_result = item.result.done
+                        if hasattr(item.result, 'success') and item.result.success:
+                            logger.info(f"✅ Ação final com sucesso: {item.result}")
+                            content = item.result.text if hasattr(item.result, 'text') else 'Ação concluída com sucesso'
+                            action_result = item.result
                             break
                     else:
                         logger.info(f"⚠️ Item {idx + 1} sem resultado")
