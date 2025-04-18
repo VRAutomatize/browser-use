@@ -40,6 +40,7 @@ RUN apt-get update && apt-get install -y \
     procps \
     dbus \
     curl \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Criar script xvfb-run se não estiver disponível
@@ -71,12 +72,20 @@ RUN python -m pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -e .
 
 # Instalar pacotes Python adicionais necessários
-RUN pip install --no-cache-dir fastapi uvicorn langchain-google-genai
+RUN pip install --no-cache-dir \
+    fastapi \
+    uvicorn \
+    langchain-google-genai \
+    psutil \
+    python-dotenv \
+    pydantic \
+    langchain-openai \
+    langchain-anthropic \
+    langchain-ollama \
+    playwright
 
 # Pré-instalar Playwright durante o build com tratamento de erros
-RUN python -m pip install playwright && \
-    echo "Instalando navegadores Playwright..." && \
-    python -m playwright install chromium || \
+RUN python -m playwright install chromium || \
     echo "Aviso: Falha na instalação do Playwright durante o build. Será tentado novamente na inicialização."
 
 # Expor porta para a API
