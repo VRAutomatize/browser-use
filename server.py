@@ -409,27 +409,40 @@ class TaskManager:
                     if item.result:
                         logger.info(f"🔍 Resultado encontrado: {item.result}")
                         
-                        # Verificar se é o resultado final
+                        # Se for uma ação final, usar como resultado
                         if hasattr(item.result, 'done') and item.result.done:
-                            logger.info(f"✅ Ação 'done' encontrada: {item.result.done}")
+                            logger.info(f"✅ Ação final encontrada: {item.result.done}")
                             content = item.result.done.get('text', 'Sem resultado')
                             action_result = item.result.done
                             break
+                        # Se tiver conteúdo extraído, usar como resultado
+                        elif hasattr(item.result, 'extracted_content') and item.result.extracted_content:
+                            logger.info(f"📄 Conteúdo extraído: {item.result.extracted_content}")
+                            content = item.result.extracted_content
+                            action_result = item.result
+                            break
+                        # Se for uma string, usar como resultado
                         elif isinstance(item.result, str):
                             logger.info(f"📄 Resultado como string: {item.result}")
                             content = item.result
+                            action_result = item.result
+                            break
+                        # Se tiver texto, usar como resultado
                         elif hasattr(item.result, 'text'):
                             logger.info(f"📄 Resultado com texto: {item.result.text}")
                             content = item.result.text
-                        
-                        # Se encontramos uma ação com sucesso, esse é o resultado final
-                        if hasattr(item.result, 'success') and item.result.success:
-                            logger.info(f"✅ Ação final com sucesso: {item.result}")
-                            content = item.result.text if hasattr(item.result, 'text') else 'Ação concluída com sucesso'
                             action_result = item.result
                             break
                     else:
                         logger.info(f"⚠️ Item {idx + 1} sem resultado")
+            
+            # Se não encontramos um resultado válido, usar o último item do histórico
+            if content == "Passo não concluído" and result and result.history:
+                last_item = result.history[-1]
+                if last_item.result:
+                    logger.info(f"📄 Usando último resultado: {last_item.result}")
+                    content = str(last_item.result)
+                    action_result = last_item.result
             
             logger.info(f"📊 Resultado final: {content}")
             logger.info(f"🎯 Ação final: {action_result}")
