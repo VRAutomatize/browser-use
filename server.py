@@ -181,6 +181,7 @@ class TaskManager:
         self.tasks: Dict[str, Dict] = {}
         self.semaphore = asyncio.Semaphore(self._calculate_max_parallel_tasks())
         self.webhook_url = "https://vrautomatize-n8n.snrhk1.easypanel.host/webhook/notify-run"
+        self.llm_config = None  # Configuração do LLM será definida na primeira tarefa
     
     def _calculate_max_parallel_tasks(self) -> int:
         """Calcula o número máximo de tarefas paralelas baseado nos recursos da máquina"""
@@ -224,6 +225,10 @@ class TaskManager:
             await error_handler.notify_error(e, {"context": "notify_webhook", "task_id": task_id})
     
     async def create_task(self, request: TaskRequest) -> str:
+        # Se for a primeira tarefa, armazena a configuração do LLM
+        if self.llm_config is None:
+            self.llm_config = request.llm_config
+            
         task_id = str(uuid.uuid4())
         self.tasks[task_id] = {
             "status": TaskStatus.PENDING,
