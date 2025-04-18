@@ -90,10 +90,10 @@ class TaskStatusResponse(BaseModel):
     status: TaskStatus
     result: Optional[str] = None
     error: Optional[str] = None
-    steps_executed: Optional[int] = None
     elapsed_seconds: Optional[float] = None
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
+    action_result: Optional[Dict] = None  # Resultado da ação do agente
 
 class SystemMetrics(BaseModel):
     cpu_percent: float
@@ -274,22 +274,18 @@ class TaskManager:
                 task["start_time"] = datetime.now()
                 
                 # Executa a tarefa como um todo
-                result, steps_count = await self._execute_command(
+                result, action_result = await self._execute_command(
                     task["request"].task,
                     task["request"].browser_config,
                     task["request"].max_steps,
                     task["request"].use_vision
                 )
                 
-                # Atualiza o status final e os passos executados
+                # Atualiza o status final e o resultado
                 task["status"] = TaskStatus.COMPLETED
                 task["end_time"] = datetime.now()
                 task["result"] = result
-                task["steps_executed"] = steps_count
-                
-                # Garantir que o steps_executed seja atualizado mesmo se não houver mudança de passo
-                if task["steps_executed"] == 0 and steps_count > 0:
-                    task["steps_executed"] = steps_count
+                task["action_result"] = action_result
                 
         except Exception as e:
             task["status"] = TaskStatus.FAILED
@@ -378,42 +374,35 @@ class TaskManager:
             # Usar max_steps da requisição
             result = await agent.run(max_steps=max_steps)
             
-            # Extrair o resultado final e contar os passos
+            # Extrair o resultado final e a ação
             content = "Passo não concluído"
-            steps_count = 0
+            action_result = None
             
             if result and result.history:
-                # Contar passos e extrair resultado
+                # Processar o histórico para encontrar o resultado final
                 for item in result.history:
                     if item.result:
-                        # Incrementa o contador de passos apenas quando há uma mudança de passo
-                        if hasattr(item, 'step') and item.step > steps_count:
-                            steps_count = item.step
-                        
                         # Verificar se é o resultado final
                         if hasattr(item.result, 'done'):
                             content = item.result.done.get('text', 'Sem resultado')
+                            action_result = {"done": item.result.done}
+                            break
                         elif isinstance(item.result, str):
                             content = item.result
                         elif hasattr(item.result, 'text'):
                             content = item.result.text
-                        
-                        # Se encontramos uma ação 'done' com sucesso, esse é o resultado final
-                        if hasattr(item.result, 'done') and item.result.done.get('success', False):
-                            content = item.result.done.get('text', 'Sem resultado')
-                            break
             
             # Fechar o navegador após o uso
             await browser.close()
             
-            return content, steps_count
+            return content, action_result
             
         except Exception as e:
             await error_handler.notify_error(e, {
                 "context": "execute_command",
                 "step": step
             })
-            return f"Erro ao executar passo: {str(e)}", 0
+            return f"Erro ao executar passo: {str(e)}", None
 
 # Inicializar o gerenciador de tarefas
 task_manager = TaskManager()
@@ -491,10 +480,10 @@ async def get_task_status(task_id: str):
         status=task["status"],
         result=task["result"],
         error=task["error"],
-        steps_executed=task["steps_executed"],
         elapsed_seconds=elapsed_seconds,
         start_time=task["start_time"],
-        end_time=task["end_time"]
+        end_time=task["end_time"],
+        action_result=task.get("action_result")
     )
 
 @app.get("/status", response_model=SystemStatusResponse)
