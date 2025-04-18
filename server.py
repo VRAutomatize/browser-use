@@ -249,24 +249,14 @@ class TaskManager:
                 task["status"] = TaskStatus.RUNNING
                 task["start_time"] = datetime.now()
                 
-                # Executa os passos sequencialmente
-                result_history = []
-                for step in task["request"].steps:
-                    # Atualiza o número de steps executados
-                    task["steps_executed"] = len(result_history)
-                    
-                    # Executa o comando
-                    result = await self._execute_command(step)
-                    result_history.append(result)
-                    
-                    # Atualiza o resultado parcial
-                    task["result"] = "\n".join(result_history)
+                # Executa a tarefa
+                result = await self._execute_command(task["request"].task)
                 
                 # Atualiza o status final
                 task["status"] = TaskStatus.COMPLETED
                 task["end_time"] = datetime.now()
-                task["result"] = "\n".join(result_history)
-                task["steps_executed"] = len(result_history)
+                task["result"] = result
+                task["steps_executed"] = 1
                 
         except Exception as e:
             task["status"] = TaskStatus.FAILED
