@@ -274,18 +274,18 @@ class TaskManager:
                 task["start_time"] = datetime.now()
                 
                 # Executa a tarefa como um todo
-                result = await self._execute_command(
+                result, steps_count = await self._execute_command(
                     task["request"].task,
                     task["request"].browser_config,
                     task["request"].max_steps,
                     task["request"].use_vision
                 )
                 
-                # Atualiza o status final
+                # Atualiza o status final e os passos executados
                 task["status"] = TaskStatus.COMPLETED
                 task["end_time"] = datetime.now()
                 task["result"] = result
-                task["steps_executed"] = 1  # A tarefa é executada como um único passo
+                task["steps_executed"] = steps_count
                 
         except Exception as e:
             task["status"] = TaskStatus.FAILED
@@ -374,30 +374,31 @@ class TaskManager:
             # Usar max_steps da requisição
             result = await agent.run(max_steps=max_steps)
             
-            # Extrair o resultado final
+            # Extrair o resultado final e contar os passos
             content = "Passo não concluído"
+            steps_count = 0
+            
             if result and result.history:
-                # Procurar pelo resultado final (última ação do tipo 'done')
-                for item in reversed(result.history):
+                # Contar passos e extrair resultado
+                for item in result.history:
                     if item.result:
                         for r in item.result:
-                            if r.action and r.action.get('type') == 'done':
-                                content = r.action.get('text', 'Sem resultado')
-                                break
-                        if content != "Passo não concluído":
-                            break
+                            if r.action:
+                                steps_count += 1
+                                if r.action.get('type') == 'done':
+                                    content = r.action.get('text', 'Sem resultado')
             
             # Fechar o navegador após o uso
             await browser.close()
             
-            return content
+            return content, steps_count
             
         except Exception as e:
             await error_handler.notify_error(e, {
                 "context": "execute_command",
                 "step": step
             })
-            return f"Erro ao executar passo: {str(e)}"
+            return f"Erro ao executar passo: {str(e)}", 0
 
 # Inicializar o gerenciador de tarefas
 task_manager = TaskManager()
