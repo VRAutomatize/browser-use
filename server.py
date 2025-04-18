@@ -442,9 +442,112 @@ async def get_system_status():
 def health_check():
     return {"status": "healthy"}
 
-# Adicionar handler de shutdown para fechar a sessão HTTP
+# Classe para gerenciamento de métricas periódicas
+class MetricsCollector:
+    def __init__(self):
+        self.webhook_url = "https://vrautomatize-n8n.snrhk1.easypanel.host/webhook/status"
+        self.session = None
+        self.is_running = False
+    
+    async def _get_session(self):
+        if self.session is None:
+            self.session = aiohttp.ClientSession()
+        return self.session
+    
+    async def collect_metrics(self):
+        """Coleta métricas do sistema e tarefas"""
+        try:
+            session = await self._get_session()
+            
+            # Obter métricas do sistema
+            cpu_percent = psutil.cpu_percent()
+            memory = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
+            
+            # Obter métricas das tarefas
+            status_counts = {
+                TaskStatus.PENDING: 0,
+                TaskStatus.RUNNING: 0,
+                TaskStatus.COMPLETED: 0,
+                TaskStatus.FAILED: 0
+            }
+            
+            running_tasks = []
+            for task_id, task in task_manager.tasks.items():
+                status_counts[task["status"]] += 1
+                
+                if task["status"] == TaskStatus.RUNNING:
+                    elapsed_seconds = (datetime.now() - task["start_time"]).total_seconds() if task["start_time"] else 0
+                    running_tasks.append({
+                        "task_id": task_id,
+                        "status": task["status"],
+                        "start_time": task["start_time"].isoformat() if task["start_time"] else None,
+                        "elapsed_seconds": elapsed_seconds,
+                        "steps_executed": task["steps_executed"]
+                    })
+            
+            # Preparar payload
+            payload = {
+                "timestamp": datetime.now().isoformat(),
+                "system_metrics": {
+                    "cpu_percent": cpu_percent,
+                    "memory_percent": memory.percent,
+                    "memory_used_gb": memory.used / (1024**3),
+                    "memory_total_gb": memory.total / (1024**3),
+                    "disk_percent": disk.percent,
+                    "disk_used_gb": disk.used / (1024**3),
+                    "disk_total_gb": disk.total / (1024**3),
+                    "cpu_count": psutil.cpu_count(logical=False) or 2,
+                    "max_parallel_tasks": task_manager._calculate_max_parallel_tasks()
+                },
+                "task_metrics": {
+                    "total_tasks": len(task_manager.tasks),
+                    "pending_tasks": status_counts[TaskStatus.PENDING],
+                    "running_tasks": status_counts[TaskStatus.RUNNING],
+                    "completed_tasks": status_counts[TaskStatus.COMPLETED],
+                    "failed_tasks": status_counts[TaskStatus.FAILED],
+                    "running_tasks_details": running_tasks
+                }
+            }
+            
+            # Enviar métricas para o webhook
+            async with session.post(self.webhook_url, json=payload) as response:
+                if response.status != 200:
+                    logger.error(f"Erro ao enviar métricas: {response.status} - {await response.text()}")
+        except Exception as e:
+            logger.error(f"Erro ao coletar métricas: {str(e)}")
+            await error_handler.notify_error(e, {"context": "metrics_collection"})
+    
+    async def start(self):
+        """Inicia a coleta periódica de métricas"""
+        if not self.is_running:
+            self.is_running = True
+            while self.is_running:
+                try:
+                    await self.collect_metrics()
+                except Exception as e:
+                    logger.error(f"Erro no loop de métricas: {str(e)}")
+                await asyncio.sleep(600)  # 10 minutos
+    
+    async def stop(self):
+        """Para a coleta de métricas"""
+        self.is_running = False
+        if self.session:
+            await self.session.close()
+            self.session = None
+
+# Inicializar o coletor de métricas
+metrics_collector = MetricsCollector()
+
+# Modificar o evento de startup para iniciar o coletor de métricas
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(metrics_collector.start())
+
+# Modificar o evento de shutdown para parar o coletor de métricas
 @app.on_event("shutdown")
 async def shutdown_event():
+    await metrics_collector.stop()
     await error_handler.close()
 
 if __name__ == "__main__":
