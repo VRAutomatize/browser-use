@@ -282,7 +282,9 @@ class TaskManager:
                     if step.strip():  # Ignora linhas vazias
                         result = await self._execute_command(
                             step.strip(),
-                            task["request"].browser_config
+                            task["request"].browser_config,
+                            task["request"].max_steps,
+                            task["request"].use_vision
                         )
                         results.append(result)
                         steps_executed += 1
@@ -354,7 +356,7 @@ class TaskManager:
             available_slots=available_slots
         )
 
-    async def _execute_command(self, step: str, browser_config: Optional[BrowserConfigModel] = None) -> str:
+    async def _execute_command(self, step: str, browser_config: Optional[BrowserConfigModel] = None, max_steps: int = 20, use_vision: bool = True) -> str:
         try:
             # Configurar o modelo LLM
             llm = get_llm(self.llm_config)
@@ -374,11 +376,11 @@ class TaskManager:
                 task=step,
                 llm=llm,
                 browser=browser,
-                use_vision=True  # Habilitar visão para melhor navegação
+                use_vision=use_vision
             )
             
-            # Permitir mais passos para ações complexas
-            result = await agent.run(max_steps=5)
+            # Usar max_steps da requisição
+            result = await agent.run(max_steps=max_steps)
             
             # Extrair o resultado
             content = "Passo não concluído"
