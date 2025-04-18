@@ -382,7 +382,10 @@ class TaskManager:
                 # Contar passos e extrair resultado
                 for item in result.history:
                     if item.result:
-                        steps_count += 1
+                        # Incrementa o contador de passos apenas quando há uma mudança de passo
+                        if hasattr(item, 'step') and item.step > steps_count:
+                            steps_count = item.step
+                        
                         # Verificar se é o resultado final
                         if isinstance(item.result, str):
                             content = item.result
