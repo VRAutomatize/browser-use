@@ -287,6 +287,10 @@ class TaskManager:
                 task["result"] = result
                 task["steps_executed"] = steps_count
                 
+                # Garantir que o steps_executed seja atualizado mesmo se não houver mudança de passo
+                if task["steps_executed"] == 0 and steps_count > 0:
+                    task["steps_executed"] = steps_count
+                
         except Exception as e:
             task["status"] = TaskStatus.FAILED
             task["error"] = str(e)
@@ -398,11 +402,6 @@ class TaskManager:
                         if hasattr(item.result, 'done') and item.result.done.get('success', False):
                             content = item.result.done.get('text', 'Sem resultado')
                             break
-                
-                # Atualizar o contador de passos na tarefa atual
-                task_id = list(self.tasks.keys())[-1]  # Pega a última tarefa criada
-                if task_id in self.tasks:
-                    self.tasks[task_id]["steps_executed"] = steps_count
             
             # Fechar o navegador após o uso
             await browser.close()
