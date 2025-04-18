@@ -387,12 +387,17 @@ class TaskManager:
                             steps_count = item.step
                         
                         # Verificar se é o resultado final
-                        if isinstance(item.result, str):
-                            content = item.result
-                        elif hasattr(item.result, 'done'):
+                        if hasattr(item.result, 'done'):
                             content = item.result.done.get('text', 'Sem resultado')
+                        elif isinstance(item.result, str):
+                            content = item.result
                         elif hasattr(item.result, 'text'):
                             content = item.result.text
+                        
+                        # Se encontramos uma ação 'done' com sucesso, esse é o resultado final
+                        if hasattr(item.result, 'done') and item.result.done.get('success', False):
+                            content = item.result.done.get('text', 'Sem resultado')
+                            break
             
             # Fechar o navegador após o uso
             await browser.close()
