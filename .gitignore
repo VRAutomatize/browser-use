@@ -182,6 +182,7 @@ gcp-login.json
 .ruff_cache
 .idea
 *.txt
+!requirements.txt
 *.pdf
 *.csv
 *.json
