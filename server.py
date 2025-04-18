@@ -13,6 +13,7 @@ from pydantic import SecretStr
 import psutil
 import uuid
 from enum import Enum
+from datetime import datetime
 
 from browser_use import Agent, BrowserConfig, Browser
 
@@ -66,6 +67,30 @@ class TaskStatusResponse(BaseModel):
     error: Optional[str] = None
     steps_executed: Optional[int] = None
 
+class SystemMetrics(BaseModel):
+    cpu_percent: float
+    memory_percent: float
+    memory_used_gb: float
+    memory_total_gb: float
+    cpu_count: int
+    max_parallel_tasks: int
+
+class RunningTaskInfo(BaseModel):
+    task_id: str
+    status: TaskStatus
+    start_time: datetime
+    elapsed_seconds: float
+    steps_executed: int
+
+class SystemStatusResponse(BaseModel):
+    system_metrics: SystemMetrics
+    running_tasks: List[RunningTaskInfo]
+    total_tasks: int
+    pending_tasks: int
+    running_tasks_count: int
+    completed_tasks: int
+    failed_tasks: int
+
 # Gerenciador de tarefas
 class TaskManager:
     def __init__(self):
@@ -93,7 +118,9 @@ class TaskManager:
             "request": request,
             "result": None,
             "error": None,
-            "steps_executed": 0
+            "steps_executed": 0,
+            "start_time": None,
+            "end_time": None
         }
         asyncio.create_task(self._execute_task(task_id))
         return task_id
@@ -103,6 +130,7 @@ class TaskManager:
             async with self.semaphore:
                 task = self.tasks[task_id]
                 task["status"] = TaskStatus.RUNNING
+                task["start_time"] = datetime.now()
                 
                 try:
                     # Configurar o modelo LLM
@@ -142,6 +170,7 @@ class TaskManager:
                     task["result"] = content
                     task["status"] = TaskStatus.COMPLETED if success else TaskStatus.FAILED
                     task["steps_executed"] = len(result.history) if result.history else 0
+                    task["end_time"] = datetime.now()
                     
                     # Fechar o navegador após o uso
                     await browser.close()
@@ -149,15 +178,65 @@ class TaskManager:
                 except Exception as e:
                     task["status"] = TaskStatus.FAILED
                     task["error"] = str(e)
+                    task["end_time"] = datetime.now()
                     logger.error(f"Erro ao executar tarefa {task_id}: {str(e)}")
                     
         except Exception as e:
             logger.error(f"Erro ao executar tarefa {task_id}: {str(e)}")
             task["status"] = TaskStatus.FAILED
             task["error"] = str(e)
+            task["end_time"] = datetime.now()
     
     def get_task_status(self, task_id: str) -> Optional[Dict]:
         return self.tasks.get(task_id)
+    
+    def get_system_status(self) -> SystemStatusResponse:
+        # Obter métricas do sistema
+        cpu_percent = psutil.cpu_percent()
+        memory = psutil.virtual_memory()
+        memory_percent = memory.percent
+        memory_used_gb = memory.used / (1024**3)
+        memory_total_gb = memory.total / (1024**3)
+        cpu_count = psutil.cpu_count(logical=False) or 2
+        
+        # Contar tarefas por status
+        status_counts = {
+            TaskStatus.PENDING: 0,
+            TaskStatus.RUNNING: 0,
+            TaskStatus.COMPLETED: 0,
+            TaskStatus.FAILED: 0
+        }
+        
+        running_tasks = []
+        for task_id, task in self.tasks.items():
+            status_counts[task["status"]] += 1
+            
+            if task["status"] == TaskStatus.RUNNING:
+                elapsed_seconds = (datetime.now() - task["start_time"]).total_seconds() if task["start_time"] else 0
+                running_tasks.append(RunningTaskInfo(
+                    task_id=task_id,
+                    status=task["status"],
+                    start_time=task["start_time"],
+                    elapsed_seconds=elapsed_seconds,
+                    steps_executed=task["steps_executed"]
+                ))
+        
+        return SystemStatusResponse(
+            system_metrics=SystemMetrics(
+                cpu_percent=cpu_percent,
+                memory_percent=memory_percent,
+                memory_used_gb=memory_used_gb,
+                memory_total_gb=memory_total_gb,
+                cpu_count=cpu_count,
+                max_parallel_tasks=self._calculate_max_parallel_tasks()
+            ),
+            running_tasks=running_tasks,
+            total_tasks=len(self.tasks),
+            pending_tasks=status_counts[TaskStatus.PENDING],
+            running_tasks_count=status_counts[TaskStatus.RUNNING],
+            completed_tasks=status_counts[TaskStatus.COMPLETED],
+            failed_tasks=status_counts[TaskStatus.FAILED]
+        )
 
 # Inicializar o gerenciador de tarefas
 task_manager = TaskManager()
@@ -230,6 +309,10 @@ async def get_task_status(task_id: str):
         error=task["error"],
         steps_executed=task["steps_executed"]
     )
+
+@app.get("/status", response_model=SystemStatusResponse)
+async def get_system_status():
+    return task_manager.get_system_status()
 
 @app.get("/health")
 def health_check():
