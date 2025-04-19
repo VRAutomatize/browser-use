@@ -541,6 +541,19 @@ async def get_task_status(task_id: str):
         logger.info(f"❌ Erro: {task.get('error')}")
         logger.info(f"🎯 Ação: {task.get('action_result')}")
         
+        # Converter action_result para dicionário se for uma lista
+        action_result = task.get("action_result")
+        if isinstance(action_result, list) and action_result:
+            # Pegar o último resultado da lista
+            last_result = action_result[-1]
+            action_result = {
+                "is_done": last_result.is_done,
+                "success": last_result.success,
+                "extracted_content": last_result.extracted_content,
+                "error": last_result.error,
+                "include_in_memory": last_result.include_in_memory
+            }
+        
         response = TaskStatusResponse(
             task_id=task_id,
             status=task["status"],
@@ -549,7 +562,7 @@ async def get_task_status(task_id: str):
             elapsed_seconds=elapsed_seconds,
             start_time=task["start_time"],
             end_time=task["end_time"],
-            action_result=task.get("action_result")
+            action_result=action_result
         )
         
         logger.info(f"✅ Resposta preparada: {response}")
