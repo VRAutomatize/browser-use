@@ -520,27 +520,48 @@ async def run_agent(request: TaskRequest = Body(...)):
 
 @app.get("/run-status/{task_id}", response_model=TaskStatusResponse)
 async def get_task_status(task_id: str):
-    task = task_manager.get_task_status(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
-    
-    elapsed_seconds = None
-    if task["start_time"]:
-        if task["end_time"]:
-            elapsed_seconds = (task["end_time"] - task["start_time"]).total_seconds()
-        else:
-            elapsed_seconds = (datetime.now() - task["start_time"]).total_seconds()
-    
-    return TaskStatusResponse(
-        task_id=task_id,
-        status=task["status"],
-        result=task["result"],
-        error=task["error"],
-        elapsed_seconds=elapsed_seconds,
-        start_time=task["start_time"],
-        end_time=task["end_time"],
-        action_result=task.get("action_result")
-    )
+    try:
+        logger.info(f"🔍 Buscando status da tarefa {task_id}")
+        task = task_manager.get_task_status(task_id)
+        if not task:
+            logger.error(f"❌ Tarefa {task_id} não encontrada")
+            raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+        
+        logger.info(f"📊 Status atual da tarefa: {task['status']}")
+        
+        elapsed_seconds = None
+        if task["start_time"]:
+            if task["end_time"]:
+                elapsed_seconds = (task["end_time"] - task["start_time"]).total_seconds()
+            else:
+                elapsed_seconds = (datetime.now() - task["start_time"]).total_seconds()
+        
+        logger.info(f"⏱️ Tempo decorrido: {elapsed_seconds} segundos")
+        logger.info(f"📝 Resultado: {task.get('result')}")
+        logger.info(f"❌ Erro: {task.get('error')}")
+        logger.info(f"🎯 Ação: {task.get('action_result')}")
+        
+        response = TaskStatusResponse(
+            task_id=task_id,
+            status=task["status"],
+            result=task.get("result"),
+            error=task.get("error"),
+            elapsed_seconds=elapsed_seconds,
+            start_time=task["start_time"],
+            end_time=task["end_time"],
+            action_result=task.get("action_result")
+        )
+        
+        logger.info(f"✅ Resposta preparada: {response}")
+        return response
+        
+    except HTTPException as he:
+        logger.error(f"❌ Erro HTTP ao buscar status da tarefa {task_id}: {str(he)}")
+        raise he
+    except Exception as e:
+        logger.error(f"❌ Erro inesperado ao buscar status da tarefa {task_id}: {str(e)}")
+        logger.error(f"📚 Stack trace: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar status da tarefa: {str(e)}")
 
 @app.get("/status", response_model=SystemStatusResponse)
 async def get_system_status():
