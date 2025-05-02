@@ -52,9 +52,9 @@ services:
   server:
     depends_on:
       - browser
-    image: nginx:alpine
+    image: joseluisq/static-web-server
     volumes:
-      - ./videos:/usr/share/nginx/html/app/videos/
+      - ./videos:/public/app/videos/
     networks:
       - default
     ports:

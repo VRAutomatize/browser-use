@@ -300,7 +300,6 @@ async def run_task(request: TaskRequest):
                     "use_vision": request.use_vision
                 }),
                 status="pending",
-                priority=request.priority,
                 created_at=datetime.utcnow()
             )
             db.add(db_task)
