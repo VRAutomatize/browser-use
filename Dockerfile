@@ -1,23 +1,22 @@
 FROM python:3.11-slim
 
-# Configurar variáveis de ambiente
+# Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/root/.local/bin:$PATH"
 ENV DISPLAY=:99
 ENV DEBIAN_FRONTEND=noninteractive
-
-# Criar usuário não-root
+# Create non-root user
 RUN useradd -m -u 1000 appuser && \
     mkdir -p /app && \
     chown appuser:appuser /app
 
-# Configurar apt para ser mais robusto
+# Configure apt to be more robust
 RUN echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80retries && \
     echo 'Acquire::http::Timeout "120";' >> /etc/apt/apt.conf.d/80retries && \
     echo 'Acquire::ftp::Timeout "120";' >> /etc/apt/apt.conf.d/80retries
 
-# Limpar cache e instalar dependências básicas
+# Clear cache and install basic dependencies
 RUN apt-get clean && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -26,7 +25,8 @@ RUN apt-get clean && \
     gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar dependências do sistema em etapas
+
+# Install system dependencies in stages
 RUN apt-get clean && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -49,7 +49,7 @@ RUN apt-get clean && \
     libnss3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar apenas fontes essenciais
+# Install only essential fonts
 RUN apt-get clean && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -57,12 +57,13 @@ RUN apt-get clean && \
     x11-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar dependências de desenvolvimento
+# Install development dependencies
 RUN apt-get clean && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     make \
     gcc \
+    g++ \
     git \
     procps \
     dbus \
@@ -72,7 +73,11 @@ RUN apt-get clean && \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar dependências adicionais do Playwright
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+RUN echo 'source /root/.cargo/env' >> $HOME/.bashrc
+
+# Install additional Playwright dependencies
 RUN apt-get clean && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -100,17 +105,17 @@ RUN apt-get clean && \
     libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar dependências Python
+# Install Python dependencies
 RUN pip install --no-cache-dir \
     fastapi==0.104.0 \
     uvicorn==0.24.0 \
-    playwright==1.40.0 \
-    sqlalchemy[postgresql]==2.0.23 \
+    playwright==1.51.0 \
+    sqlalchemy[postgresql]==2.0.40 \
     asyncpg==0.29.0 \
-    psycopg2-binary==2.9.9 \
+    psycopg2-binary==2.9.10 \
     python-dotenv==1.0.0 \
-    pydantic==2.5.2 \
-    pydantic-settings==2.1.0 \
+    pydantic==2.10.4 \
+    pydantic-settings>=2.1.0 \
     python-jose[cryptography]==3.3.0 \
     passlib[bcrypt]==1.7.4 \
     python-multipart==0.0.6 \
@@ -118,36 +123,49 @@ RUN pip install --no-cache-dir \
     httpx==0.25.2 \
     psutil==5.9.6 \
     alembic==1.12.1 \
-    greenlet==3.0.1 \
-    posthog==3.0.0
+    greenlet==3.1.1 \
+    posthog==3.7.0 \
+    sentence-transformers>=4.0.2 \
+    mem0ai==0.1.88 \
+    screeninfo==0.8.1 \
+    requests>=2.32.3
 
-# Instalar pacotes LangChain necessários
-RUN pip install --no-cache-dir langchain==0.1.0
-RUN pip install --no-cache-dir langchain-openai==0.0.5
+# Install required LangChain packages
+RUN pip install --no-cache-dir langchain==0.3.21
+RUN pip install --no-cache-dir langchain_core==0.3.49
+RUN pip install --no-cache-dir langchain-openai==0.3.11
 
-# Instalar navegadores do Playwright
+# Install Playwright browsers
 ENV PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright
 RUN playwright install --with-deps chromium firefox webkit
 RUN playwright install-deps
 
-# Criar diretório para logs
+RUN apt-get install xauth -y
+
+RUN pip install --no-cache-dir langchain-ollama
+RUN pip install --no-cache-dir langchain_google_genai==2.1.4
+
+# ensure correct permissions for /tmp/.X11-unix to prevent Xvfb from issuing warnings
+RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
+
+# Create directory for logs
 RUN mkdir -p /var/log/browser-use && \
     chown appuser:appuser /var/log/browser-use
 
-# Configurar diretório de trabalho
+# Set working directory
 WORKDIR /app
 
-# Copiar o código da aplicação
+# Copy application code
 COPY . .
 
-# Configurar permissões
-RUN chown -R appuser:appuser /app
+# Set permissions
+# RUN chown -R appuser:appuser /app
 
-# Mudar para usuário não-root
-USER appuser
+# # Switch to non-root user
+# USER appuser
 
-# Expor porta
-EXPOSE 8000
+# Expose port
+EXPOSE 9000
 
-# Comando para iniciar a aplicação
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"] 
+# Command to start the application
+CMD ["./start.sh"]

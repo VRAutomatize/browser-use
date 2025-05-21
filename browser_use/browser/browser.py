@@ -153,7 +153,6 @@ class Browser:
 
 		browser = await self._setup_browser(playwright)
 		self.playwright_browser = browser
-
 		return self.playwright_browser
 
 	async def _setup_remote_cdp_browser(self, playwright: Playwright) -> PlaywrightBrowser:
